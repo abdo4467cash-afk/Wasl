@@ -21,7 +21,7 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Extract and Build APK Directly (No Broken Cache Action)
+      - name: Extract, Patch Null-Safety, and Build APK
         run: |
           set +e
           mkdir -p "$GITHUB_WORKSPACE/work_build"
@@ -32,6 +32,17 @@ jobs:
           GRADLE_FILE=$(find "$GITHUB_WORKSPACE/work_build" -name "settings.gradle.kts" | head -n 1)
           BUILD_DIR=$(dirname "$GRADLE_FILE")
           cd "$BUILD_DIR"
+
+          # Fix the 6 nullable receiver calls in BluetoothRfcommManager.kt & LanDiscoveryAndTransportManager.kt
+          BT_FILE=$(find . -name "BluetoothRfcommManager.kt" | head -n 1)
+          LAN_FILE=$(find . -name "LanDiscoveryAndTransportManager.kt" | head -n 1)
+
+          sed -i 's/bluetoothAdapter\.cancelDiscovery()/bluetoothAdapter?.cancelDiscovery()/g' "$BT_FILE"
+          sed -i 's/nsdManager\.registerService/nsdManager?.registerService/g' "$LAN_FILE"
+          sed -i 's/nsdManager\.unregisterService/nsdManager?.unregisterService/g' "$LAN_FILE"
+          sed -i 's/nsdManager\.resolveService/nsdManager?.resolveService/g' "$LAN_FILE"
+          sed -i 's/nsdManager\.discoverServices/nsdManager?.discoverServices/g' "$LAN_FILE"
+          sed -i 's/nsdManager\.stopServiceDiscovery/nsdManager?.stopServiceDiscovery/g' "$LAN_FILE"
 
           # Ensure clean themes.xml for AAPT2
           cat << 'XML' > app/src/main/res/values/themes.xml
@@ -45,18 +56,15 @@ jobs:
           </resources>
           XML
 
-          # Download Gradle 8.6 directly if not installed
-          if ! command -v gradle >/dev/null 2>&1; then
-            curl -sL https://services.gradle.org/distributions/gradle-8.6-bin.zip -o /tmp/gradle.zip
-            unzip -q /tmp/gradle.zip -d /tmp/gradle
-            export PATH="/tmp/gradle/gradle-8.6/bin:$PATH"
-          fi
+          # Use Gradle 8.6 specifically for full compatibility with AGP 8.3.2
+          curl -sL https://services.gradle.org/distributions/gradle-8.6-bin.zip -o /tmp/gradle.zip
+          unzip -q -o /tmp/gradle.zip -d /tmp/gradle
+          export PATH="/tmp/gradle/gradle-8.6/bin:$PATH"
 
-          # Accept Android SDK licenses automatically
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null 2>&1 || true
 
           echo "=== Running gradle assembleDebug ===" >> "$GITHUB_WORKSPACE/build_log.txt"
-          gradle assembleDebug --no-daemon --stacktrace >> "$GITHUB_WORKSPACE/build_log.txt" 2>&1
+          /tmp/gradle/gradle-8.6/bin/gradle assembleDebug --no-daemon --stacktrace >> "$GITHUB_WORKSPACE/build_log.txt" 2>&1
 
           APK_FOUND=$(find . -name "*-debug.apk" | head -n 1)
           if [ -n "$APK_FOUND" ]; then
